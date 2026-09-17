@@ -6,7 +6,6 @@ let currentTrackIndex = 0;
 let isPlaying = false;
 let isDraggingProgress = false;
 
-const audioPlayer = document.getElementById('audio-player');
 const visualizer = document.getElementById('visualizer');
 const playPauseBtn = document.getElementById('btn-play-pause');
 const trackNameDisplay = document.getElementById('current-track-name');
@@ -22,7 +21,7 @@ document.getElementById('btn-close-settings').addEventListener('click', () => {
     document.getElementById('settings-modal').classList.add('hidden');
 });
 
-// --- LẤY NHẠC VỚI HỆ THỐNG BACKUP SERVER MỚI NHẤT ---
+// --- TÌM KIẾM METADATA (dùng nhiều server Piped dự phòng, chỉ để tra tên bài -> videoId) ---
 const PIPED_INSTANCES = [
     'https://pipedapi.kavin.rocks',
     'https://pipedapi-libre.kavin.rocks',
@@ -46,41 +45,119 @@ async function fetchWithTimeout(url, ms = 6000) {
     }
 }
 
-async function fetchNoAdsAudio(videoId) {
-    trackNameDisplay.innerText = "Đang tải...";
-    for (const instance of PIPED_INSTANCES) {
-        try {
-            const res = await fetchWithTimeout(`${instance}/streams/${videoId}`);
-            if (!res.ok) continue;
-            const data = await res.json();
-            if (data.audioStreams && data.audioStreams.length > 0) {
-                // Ưu tiên luồng audio-only chất lượng cao nhất nếu có
-                const audioOnly = data.audioStreams.filter(s => s.audioOnly !== false);
-                const best = (audioOnly.length > 0 ? audioOnly : data.audioStreams)
-                    .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-                return best.url;
-            }
-        } catch (error) { console.log(`Server ${instance} lỗi, thử server khác...`); }
+// --- PHÁT NHẠC BẰNG YOUTUBE IFRAME PLAYER API (ẩn video, chỉ giữ tiếng) ---
+// Lý do đổi từ Piped stream-scraping sang cách này: YouTube liên tục chặn IP
+// của các server Piped khiến endpoint /streams hay trả lỗi 403 / rỗng, không
+// phải lỗi cấu hình mà là vấn đề nguồn cứ lặp lại. IFrame API là API chính
+// chủ của YouTube nên ổn định hơn nhiều, đổi lại đôi khi sẽ có quảng cáo.
+let ytPlayer = null;
+let playerReady = false;
+let pendingLoadIndex = null;
+let progressInterval = null;
+let hasUserInteracted = false;
+
+// Nạp script IFrame API động (theo đúng khuyến nghị của Google)
+(function loadYouTubeIframeAPI() {
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    const firstScriptTag = document.getElementsByTagName('script')[0];
+    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+})();
+
+// Container ẩn cho player (đưa ra ngoài màn hình thay vì display:none,
+// vì display:none đôi khi khiến trình duyệt/iOS tạm dừng audio)
+const ytContainer = document.createElement('div');
+ytContainer.id = 'yt-player-container';
+ytContainer.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
+document.body.appendChild(ytContainer);
+
+// Hàm này bắt buộc phải là hàm global tên đúng "onYouTubeIframeAPIReady"
+window.onYouTubeIframeAPIReady = function() {
+    ytPlayer = new YT.Player('yt-player-container', {
+        height: '1',
+        width: '1',
+        playerVars: { autoplay: 0, controls: 0, disablekb: 1, fs: 0, modestbranding: 1, playsinline: 1 },
+        events: {
+            onReady: onPlayerReady,
+            onStateChange: onPlayerStateChange,
+            onError: onPlayerError
+        }
+    });
+};
+
+function onPlayerReady() {
+    playerReady = true;
+    if (pendingLoadIndex !== null) {
+        const idx = pendingLoadIndex;
+        pendingLoadIndex = null;
+        loadTrack(idx);
     }
-    trackNameDisplay.innerText = "Lỗi tải nhạc!";
-    return null;
 }
 
-async function loadTrack(index) {
+function onPlayerStateChange(event) {
+    if (event.data === YT.PlayerState.PLAYING) {
+        isPlaying = true;
+        visualizer.classList.add('active');
+        playPauseBtn.innerText = '⏸';
+        playPauseBtn.classList.replace('is-success', 'is-warning');
+        timeTotal.innerText = formatTime(ytPlayer.getDuration());
+        startProgressPolling();
+    } else if (event.data === YT.PlayerState.PAUSED) {
+        isPlaying = false;
+        visualizer.classList.remove('active');
+        playPauseBtn.innerText = '▶';
+        playPauseBtn.classList.replace('is-warning', 'is-success');
+        stopProgressPolling();
+    } else if (event.data === YT.PlayerState.ENDED) {
+        nextTrack();
+    }
+}
+
+function onPlayerError(event) {
+    // 2=id sai, 5=lỗi HTML5 player, 100=video bị xoá/riêng tư, 101/150=video chặn nhúng
+    console.log('Lỗi phát video, mã lỗi:', event.data);
+    trackNameDisplay.innerText = 'Video lỗi / bị chặn, đang chuyển bài...';
+    setTimeout(nextTrack, 1500);
+}
+
+function startProgressPolling() {
+    stopProgressPolling();
+    progressInterval = setInterval(() => {
+        if (!isDraggingProgress && ytPlayer && ytPlayer.getDuration) {
+            const current = ytPlayer.getCurrentTime() || 0;
+            const duration = ytPlayer.getDuration() || 0;
+            progressBar.value = duration ? (current / duration) * 100 : 0;
+            timeCurrent.innerText = formatTime(current);
+        }
+    }, 500);
+}
+
+function stopProgressPolling() {
+    if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+    }
+}
+
+function loadTrack(index) {
     currentTrackIndex = index;
     const track = playlist[currentTrackIndex];
     renderPlaylist();
 
-    audioPlayer.pause();
     progressBar.value = 0;
     timeCurrent.innerText = "00:00";
+    timeTotal.innerText = "00:00";
+    trackNameDisplay.innerText = track.title;
 
-    const audioUrl = await fetchNoAdsAudio(track.id);
-
-    if (audioUrl) {
-        audioPlayer.src = audioUrl;
-        trackNameDisplay.innerText = track.title;
-        audioPlayer.play().catch(() => console.log("Chờ user click..."));
+    if (!playerReady) {
+        pendingLoadIndex = index;
+        return;
+    }
+    ytPlayer.loadVideoById(track.id);
+    if (!hasUserInteracted) {
+        // Trước cú click đầu tiên, trình duyệt sẽ tự chặn autoplay có tiếng,
+        // nên chỉ cue video, đợi người dùng bấm play/next/prev để phát.
+        ytPlayer.pauseVideo();
     }
 }
 
@@ -91,60 +168,48 @@ function formatTime(seconds) {
     return `${m}:${s}`;
 }
 
-audioPlayer.addEventListener('timeupdate', () => {
-    if (!isDraggingProgress) {
-        const percent = (audioPlayer.currentTime / audioPlayer.duration) * 100;
-        progressBar.value = percent || 0;
-        timeCurrent.innerText = formatTime(audioPlayer.currentTime);
-    }
-});
-
-audioPlayer.addEventListener('loadedmetadata', () => {
-    timeTotal.innerText = formatTime(audioPlayer.duration);
-});
-
 progressBar.addEventListener('mousedown', () => isDraggingProgress = true);
 progressBar.addEventListener('mouseup', () => isDraggingProgress = false);
 progressBar.addEventListener('input', (e) => {
-    const seekTime = (e.target.value / 100) * audioPlayer.duration;
+    if (!ytPlayer) return;
+    const seekTime = (e.target.value / 100) * (ytPlayer.getDuration() || 0);
     timeCurrent.innerText = formatTime(seekTime);
 });
 progressBar.addEventListener('change', (e) => {
-    const seekTime = (e.target.value / 100) * audioPlayer.duration;
-    audioPlayer.currentTime = seekTime;
+    if (!ytPlayer) return;
+    const seekTime = (e.target.value / 100) * (ytPlayer.getDuration() || 0);
+    ytPlayer.seekTo(seekTime, true);
 });
 
 window.addEventListener('DOMContentLoaded', () => {
-    loadTrack(currentTrackIndex);
+    if (playerReady) loadTrack(currentTrackIndex);
+    else pendingLoadIndex = currentTrackIndex;
+
     document.body.addEventListener('click', () => {
-        if (audioPlayer.paused && audioPlayer.src) audioPlayer.play();
+        hasUserInteracted = true;
+        if (ytPlayer && ytPlayer.playVideo && !isPlaying) ytPlayer.playVideo();
     }, { once: true });
 });
 
-audioPlayer.addEventListener('play', () => {
-    isPlaying = true;
-    visualizer.classList.add('active');
-    playPauseBtn.innerText = '⏸';
-    playPauseBtn.classList.replace('is-success', 'is-warning');
-});
-audioPlayer.addEventListener('pause', () => {
-    isPlaying = false;
-    visualizer.classList.remove('active');
-    playPauseBtn.innerText = '▶';
-    playPauseBtn.classList.replace('is-warning', 'is-success');
-});
-audioPlayer.addEventListener('ended', nextTrack);
-
 function nextTrack() {
+    hasUserInteracted = true;
     currentTrackIndex = (currentTrackIndex + 1) % playlist.length;
     loadTrack(currentTrackIndex);
+    if (playerReady) ytPlayer.playVideo();
 }
 
 function prevTrack() {
+    hasUserInteracted = true;
     currentTrackIndex = (currentTrackIndex - 1 + playlist.length) % playlist.length;
     loadTrack(currentTrackIndex);
+    if (playerReady) ytPlayer.playVideo();
 }
-playPauseBtn.addEventListener('click', () => isPlaying ? audioPlayer.pause() : audioPlayer.play());
+
+playPauseBtn.addEventListener('click', () => {
+    hasUserInteracted = true;
+    if (!ytPlayer) return;
+    isPlaying ? ytPlayer.pauseVideo() : ytPlayer.playVideo();
+});
 document.getElementById('btn-next').addEventListener('click', nextTrack);
 document.getElementById('btn-prev').addEventListener('click', prevTrack);
 
