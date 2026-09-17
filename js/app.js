@@ -25,23 +25,42 @@ document.getElementById('btn-close-settings').addEventListener('click', () => {
 // --- LẤY NHẠC VỚI HỆ THỐNG BACKUP SERVER MỚI NHẤT ---
 const PIPED_INSTANCES = [
     'https://pipedapi.kavin.rocks',
-    'https://pipedapi.tokhmi.xyz',
-    'https://api.piped.projectsegfau.lt',
-    'https://piped-api.lunar.icu',
-    'https://pipedapi.smnz.de',
-    'https://piped-api.garudalinux.org'
+    'https://pipedapi-libre.kavin.rocks',
+    'https://pipedapi.leptons.xyz',
+    'https://pipedapi.adminforge.de',
+    'https://api.piped.yt',
+    'https://pipedapi.drgns.space',
+    'https://pipedapi.owo.si',
+    'https://pipedapi.darkness.services'
 ];
+
+// Fetch có timeout để không bị treo lâu khi 1 instance bị chết
+async function fetchWithTimeout(url, ms = 6000) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), ms);
+    try {
+        const res = await fetch(url, { signal: controller.signal });
+        return res;
+    } finally {
+        clearTimeout(id);
+    }
+}
+
 async function fetchNoAdsAudio(videoId) {
     trackNameDisplay.innerText = "Đang tải...";
     for (const instance of PIPED_INSTANCES) {
         try {
-            const res = await fetch(`${instance}/streams/${videoId}`);
+            const res = await fetchWithTimeout(`${instance}/streams/${videoId}`);
             if (!res.ok) continue;
             const data = await res.json();
             if (data.audioStreams && data.audioStreams.length > 0) {
-                return data.audioStreams[0].url;
+                // Ưu tiên luồng audio-only chất lượng cao nhất nếu có
+                const audioOnly = data.audioStreams.filter(s => s.audioOnly !== false);
+                const best = (audioOnly.length > 0 ? audioOnly : data.audioStreams)
+                    .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+                return best.url;
             }
-        } catch (error) { console.log(`Thử server khác...`); }
+        } catch (error) { console.log(`Server ${instance} lỗi, thử server khác...`); }
     }
     trackNameDisplay.innerText = "Lỗi tải nhạc!";
     return null;
@@ -162,19 +181,25 @@ document.getElementById('btn-add-song').addEventListener('click', async() => {
     if (!videoId && query.length === 11 && !query.includes(' ')) videoId = query;
 
     if (!videoId) {
-        try {
-            // Cập nhật API tìm kiếm sang server dự phòng ổn định hơn
-            const res = await fetch(`https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(query)}&filter=music_songs`);
-            const data = await res.json();
-            if (data.items && data.items.length > 0) {
-                const firstVideo = data.items.find(item => item.type === 'stream');
-                if (firstVideo) {
-                    videoId = firstVideo.url.replace('/watch?v=', '');
-                    videoTitle = firstVideo.title;
+        let found = false;
+        for (const instance of PIPED_INSTANCES) {
+            try {
+                const res = await fetchWithTimeout(`${instance}/search?q=${encodeURIComponent(query)}&filter=music_songs`);
+                if (!res.ok) continue;
+                const data = await res.json();
+                if (data.items && data.items.length > 0) {
+                    const firstVideo = data.items.find(item => item.type === 'stream');
+                    if (firstVideo) {
+                        videoId = firstVideo.url.replace('/watch?v=', '');
+                        videoTitle = firstVideo.title;
+                        found = true;
+                        break;
+                    }
                 }
-            }
-        } catch (err) {
-            statusMsg.innerText = "Lỗi tìm kiếm!";
+            } catch (err) { console.log(`Server ${instance} lỗi, thử server khác...`); }
+        }
+        if (!found) {
+            statusMsg.innerText = "Lỗi tìm kiếm! (không server nào phản hồi)";
             return;
         }
     } else { videoTitle = `Track: ${videoId}`; }
