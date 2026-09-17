@@ -24,11 +24,13 @@ document.getElementById('btn-close-settings').addEventListener('click', () => {
 
 // --- LẤY NHẠC VỚI HỆ THỐNG BACKUP SERVER MỚI NHẤT ---
 const PIPED_INSTANCES = [
-    'https://api.piped.projectsegfau.lt',
     'https://pipedapi.kavin.rocks',
-    'https://pipedapi.in.projectsegfau.lt'
+    'https://pipedapi.tokhmi.xyz',
+    'https://api.piped.projectsegfau.lt',
+    'https://piped-api.lunar.icu',
+    'https://pipedapi.smnz.de',
+    'https://piped-api.garudalinux.org'
 ];
-
 async function fetchNoAdsAudio(videoId) {
     trackNameDisplay.innerText = "Đang tải...";
     for (const instance of PIPED_INSTANCES) {
