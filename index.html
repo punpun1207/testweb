@@ -8,6 +8,23 @@
     <link href="https://fonts.googleapis.com/css?family=Press+Start+2P" rel="stylesheet">
     <link href="https://unpkg.com/nes.css@2.3.0/css/nes.min.css" rel="stylesheet" />
     <link rel="stylesheet" href="css/style.css">
+    <style>
+        /* Khung video nhỏ cho YouTube player - PHẢI thực sự hiển thị (không display:none / off-screen),
+           vì YouTube chặn phát (lỗi 150) nếu phát hiện player bị giấu hoàn toàn khỏi màn hình. */
+        .yt-mini-thumb {
+            width: 46px;
+            height: 46px;
+            flex-shrink: 0;
+            overflow: hidden;
+            border-radius: 4px;
+            background: #000;
+        }
+        .yt-mini-thumb iframe {
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+    </style>
 </head>
 
 <body>
@@ -82,6 +99,7 @@
     <div id="mini-player" class="nes-container is-dark is-rounded">
         <!-- Visualizer & Tên bài -->
         <div class="mini-header">
+            <div id="yt-player-container" class="yt-mini-thumb"></div>
             <div class="visualizer" id="visualizer">
                 <div class="bar"></div>
                 <div class="bar"></div>
