@@ -164,7 +164,7 @@ document.getElementById('btn-add-song').addEventListener('click', async() => {
     if (!videoId) {
         try {
             // Cập nhật API tìm kiếm sang server dự phòng ổn định hơn
-            const res = await fetch(`https://api.piped.projectsegfau.lt/search?q=${encodeURIComponent(query)}&filter=music_songs`);
+            const res = await fetch(`https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(query)}&filter=music_songs`);
             const data = await res.json();
             if (data.items && data.items.length > 0) {
                 const firstVideo = data.items.find(item => item.type === 'stream');
