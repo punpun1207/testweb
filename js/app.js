@@ -64,18 +64,14 @@ let hasUserInteracted = false;
     firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 })();
 
-// Container ẩn cho player (đưa ra ngoài màn hình thay vì display:none,
-// vì display:none đôi khi khiến trình duyệt/iOS tạm dừng audio)
-const ytContainer = document.createElement('div');
-ytContainer.id = 'yt-player-container';
-ytContainer.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
-document.body.appendChild(ytContainer);
+// Container hiển thị thật (46x46px trong mini-player) — KHÔNG giấu off-screen,
+// vì YouTube chặn phát (lỗi 150) khi phát hiện player bị ẩn hoàn toàn khỏi màn hình.
 
 // Hàm này bắt buộc phải là hàm global tên đúng "onYouTubeIframeAPIReady"
 window.onYouTubeIframeAPIReady = function() {
     ytPlayer = new YT.Player('yt-player-container', {
-        height: '1',
-        width: '1',
+        height: '46',
+        width: '46',
         playerVars: { autoplay: 0, controls: 0, disablekb: 1, fs: 0, modestbranding: 1, playsinline: 1 },
         events: {
             onReady: onPlayerReady,
